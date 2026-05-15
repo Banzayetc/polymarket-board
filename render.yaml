@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: polymarket-sports-board
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4
+    envVars:
+      - key: DB_PATH
+        value: /tmp/board.db
+      - key: CACHE_TTL_MIN
+        value: 10
+      - key: ANTHROPIC_API_KEY
+        sync: false
