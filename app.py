@@ -241,7 +241,17 @@ def parse_event(e):
                 away = {"price": p, "vol": vol}
     elif ml:
         m = ml[0]
-        home = {"price": yes_price(m), "vol": float(m.get("volume") or 0)}
+        raw = m.get("outcomePrices") or "[]"
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception:
+                raw = []
+        prices = [float(p) for p in raw] if raw else []
+        vol = float(m.get("volume") or 0)
+        home = {"price": prices[0] if prices else 0.0, "vol": vol}
+        if len(prices) >= 2:
+            away = {"price": prices[1], "vol": vol}
 
     if home is None:
         return None
@@ -317,6 +327,22 @@ app = Flask(__name__)
 def health():
     return jsonify({"status": "ok"})
 
+@app.route("/api/refresh-pinnacle", methods=["POST"])
+def refresh_pinnacle():
+    sport = request.json.get("sport", "soccer") if request.json else "soccer"
+    sport_info = next((s for s in SPORTS if s["tag"] == sport), None)
+    if not sport_info:
+        return jsonify({"error": "unknown sport"}), 400
+    pinn_sport = sport_info["pinn_sport"]
+    # Clear pinnacle index cache
+    con = sqlite3.connect(DB_PATH)
+    con.execute("DELETE FROM cache WHERE key LIKE 'pinn_%'")
+    con.execute("DELETE FROM cache WHERE key LIKE 'pm_%'")
+    con.commit()
+    con.close()
+    log.info(f"Pinnacle cache cleared for rebuild")
+    return jsonify({"status": "cleared"})
+
 @app.route("/api/markets")
 def api_markets():
     tag = request.args.get("sport", "soccer")
@@ -386,6 +412,7 @@ td{padding:9px 12px;vertical-align:middle}
   <div class="header-right">
     <span>Updated: <span id="lu">—</span></span>
     <button id="rbtn" onclick="load()">⟳ Refresh</button>
+    <button id="pbtn" onclick="refreshPinnacle()" style="background:var(--bg3);border:1px solid var(--border);color:var(--amber);padding:5px 12px;border-radius:4px;cursor:pointer;font-family:var(--mono);font-size:11px;margin-left:4px">⟳ Pinnacle</button>
   </div>
 </header>
 <div class="toolbar">
@@ -482,6 +509,15 @@ function initTabs(){
     b.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));b.classList.add('active');tag=s.tag;load()};
     c.appendChild(b);
   });
+}
+async function refreshPinnacle(){
+  const btn=document.getElementById('pbtn');
+  btn.textContent='⟳ ...';
+  try{
+    await fetch('/api/refresh-pinnacle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sport:tag})});
+    await load();
+  }catch(e){alert('Error: '+e.message)}
+  btn.textContent='⟳ Pinnacle';
 }
 initTabs();load();
 </script>
