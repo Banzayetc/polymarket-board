@@ -154,7 +154,11 @@ def build_pinnacle_index(sport_id):
                     continue
 
                 start = mu.get("startTime") or ""
-                league_data[str(mu["id"])] = {"home": home, "away": away, "start": start, "h": h, "d": d, "a": a}
+                league_data[str(mu["id"])] = {
+                    "home": home, "away": away, "start": start,
+                    "h": h, "d": d, "a": a,
+                    "matchup_id": mu["id"],
+                }
 
             cache_set(lkey, league_data)
 
@@ -163,7 +167,8 @@ def build_pinnacle_index(sport_id):
             k2 = norm(match["away"]) + "|" + norm(match["home"])
             index[k1] = match
             index[k2] = {"home": match["away"], "away": match["home"],
-                         "h": match["a"], "d": match["d"], "a": match["h"], "start": match["start"]}
+                         "h": match["a"], "d": match["d"], "a": match["h"],
+                         "start": match["start"], "matchup_id": match.get("matchup_id")}
 
     log.info(f"Pinnacle index sport {sport_id}: {len(index)//2} matches")
     cache_set(key, index)
@@ -303,9 +308,14 @@ def get_markets(sport_tag):
             break
         match = find_pinnacle(ev["title"], pinn_index)
         if match:
+            mid = match.get("matchup_id")
+            sport_slug = sport_info["key"] if sport_info else "soccer"
+            pinn_url = f"https://www.pinnacle.com/en/{sport_slug}/matchups#matchupCode={mid}" if mid else ""
             ev["pinnacle"] = {
                 "home": match["h"], "draw": match["d"], "away": match["a"],
                 "matched_title": f"{match['home']} vs {match['away']}",
+                "url": pinn_url,
+                "matchup_id": mid,
             }
             if ev["home"] and match["h"] is not None:
                 ev["diff_home"] = round((ev["home"]["price"] - match["h"]) * 100, 1)
@@ -326,6 +336,18 @@ app = Flask(__name__)
 @app.route("/health")
 def health():
     return jsonify({"status": "ok"})
+
+@app.route("/api/refresh-row", methods=["POST"])
+def refresh_row():
+    body = request.get_json(silent=True) or {}
+    slug = body.get("slug", "")
+    sport = body.get("sport", "soccer")
+    # Сбрасываем кэш только для этого спорта
+    con = sqlite3.connect(DB_PATH)
+    con.execute("DELETE FROM cache WHERE key=?", (f"pm_{sport}",))
+    con.commit()
+    con.close()
+    return jsonify({"status": "cleared", "slug": slug})
 
 @app.route("/api/refresh-pinnacle", methods=["POST"])
 def refresh_pinnacle():
@@ -442,7 +464,7 @@ td{padding:9px 12px;vertical-align:middle}
         <th style="width:9%" class="c">Diff (H)</th>
         <th style="width:10%" class="r">Volume</th>
         <th style="width:11%" class="r">Liquidity</th>
-        <th style="width:10%" class="c">Link</th>
+        <th style="width:10%" class="c">Links</th>
       </tr>
     </thead>
     <tbody id="tb"><tr class="sr"><td colspan="7">Loading…</td></tr></tbody>
@@ -475,7 +497,11 @@ function render(){
       <td class="c">${db(ev.diff_home??null)}</td>
       <td class="r"><span class="vol">${f$(ev.volume)}</span></td>
       <td class="r"><div class="lw"><span class="vol">${f$(ev.liquidity)}</span><div class="lb" style="width:${bw}px"></div></div></td>
-      <td class="c"><a class="lnk" href="${PM}/${ev.slug}" target="_blank">↗</a></td>
+      <td class="c" style="white-space:nowrap">
+        <a class="lnk" href="${PM}/${ev.slug}" target="_blank" title="Polymarket" style="display:inline;margin-right:8px">PM</a>
+        ${pin?.url ? `<a class="lnk" href="${pin.url}" target="_blank" title="Pinnacle" style="display:inline;margin-right:8px">PIN</a>` : '<span style="color:var(--dim);font-size:10px">PIN</span>'}
+        <button onclick="refreshRow('${ev.slug}','${ev.id}')" style="background:transparent;border:none;color:var(--dim);cursor:pointer;font-size:14px;padding:0 2px" title="Refresh">⟳</button>
+      </td>
     </tr>`;
   }).join('');
 }
@@ -518,6 +544,12 @@ async function refreshPinnacle(){
     await load();
   }catch(e){alert('Error: '+e.message)}
   btn.textContent='⟳ Pinnacle';
+}
+async function refreshRow(slug, id){
+  try{
+    await fetch('/api/refresh-row',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slug,sport:tag})});
+    await load();
+  }catch(e){console.error(e)}
 }
 initTabs();load();
 </script>
